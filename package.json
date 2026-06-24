@@ -1,0 +1,44 @@
+{
+  "name": "@crtrs/driver",
+  "version": "0.1.1",
+  "description": "Node.js client for Driver.",
+  "author": "CREATORS",
+  "license": "MIT",
+  "homepage": "https://creators.industries",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CREATORS-INDUSTRIES/driver-node.git",
+    "directory": "/"
+  },
+  "bugs": {
+    "url": "https://github.com/CREATORS-INDUSTRIES/driver-node/issues"
+  },
+  "main": "src/index.js",
+  "types": "index.d.ts",
+  "files": [
+    "src/index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "driver",
+    "agent",
+    "ai",
+    "sse",
+    "CREATORS", 
+    "CREATORS INDUSTRIES", 
+    "cloud"
+  ],
+  "scripts": {
+    "test": "node test/smoke.js",
+    "prepublishOnly": "node test/smoke.js"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">= 18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
