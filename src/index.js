@@ -1,6 +1,7 @@
 'use strict';
 
 const { EventEmitter } = require('events');
+const { Tool, Param, ToolResult, ToolError, defineTool, parseSignature, normalizeParams, PARAM_DESC_MAX } = require('./tool');
 
 const DEFAULT_BASE_URL = 'https://driver.tors.app';
 const RUN_PATH = '/api/driver/run';
@@ -26,6 +27,8 @@ class Driver extends EventEmitter {
    * @param {string} opts.apiKey  the `dr_…` API key (machine credential)
    * @param {string} [opts.baseUrl] cloud base URL; defaults to driver.tors.app
    * @param {typeof fetch} [opts.fetch] custom fetch impl (defaults to global fetch)
+   * @param {object[]} [opts.tools] default tools sent with every `run`; a per-run
+   *   `tools` option overrides this list for that call.
    */
   constructor(opts = {}) {
     super();
@@ -35,10 +38,11 @@ class Driver extends EventEmitter {
     }
     this.apiKey = apiKey;
     this.baseUrl = (opts.baseUrl || process.env.DRIVER_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
-    this._fetch = opts.fetch || globalThis.fetch;
+    this._fetch = opts.fetch || globalThis.fetch.bind(globalThis);
     if (typeof this._fetch !== 'function') {
       throw new Error('Driver: no fetch available — use Node 18+ or pass { fetch }');
     }
+    this.tools = opts.tools || [];
   }
 
   /**
@@ -48,9 +52,17 @@ class Driver extends EventEmitter {
    * @param {object} [opts]
    * @param {(ev: object) => void} [opts.onEvent] per-event callback
    * @param {AbortSignal} [opts.signal] abort the stream early
+   * @param {Array<Tool|object>} [opts.tools] tools for this run; overrides
+   *   constructor `tools`. Tool instances run locally on `tool_request`.
    * @returns {Promise<object>} resolves with the final `done` event
    */
   async run(prompt, opts = {}) {
+    const tools = opts.tools || this.tools;
+    const body = { prompt };
+    // Tool instances serialize to their catalog shape; plain dicts pass through.
+    if (tools && tools.length) {
+      body.tools = tools.map((t) => (t instanceof Tool ? t.toJSON() : t));
+    }
     const res = await this._fetch(this.baseUrl + RUN_PATH, {
       method: 'POST',
       headers: {
@@ -58,7 +70,7 @@ class Driver extends EventEmitter {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
       },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify(body),
       signal: opts.signal,
     });
 
@@ -70,11 +82,28 @@ class Driver extends EventEmitter {
       throw new Error('Driver run failed: empty response body (no SSE stream)');
     }
 
+    // Registry of locally-runnable tools, keyed by name, for tool_request.
+    const registry = new Map();
+    for (const t of tools || []) if (t instanceof Tool) registry.set(t.name(), t);
+    let runId = null;
+
     let done = null;
     for await (const ev of parseSSE(res.body)) {
+      if (!ev || typeof ev.kind !== 'string') continue;
+      // `run`: first event, carries the run_id we POST tool results against.
+      if (ev.kind === 'run') {
+        runId = ev.run_id;
+        continue;
+      }
+      // `tool_request`: the cloud is asking us to run one of OUR tools locally
+      // and hand back the result. Internal — not surfaced to the client.
+      if (ev.kind === 'tool_request') {
+        await this._answerToolRequest(runId, ev, registry, opts.signal);
+        continue;
+      }
       // Allowlist: only surface the five public kinds. Anything else is
       // dropped so internal events can never leak to the client.
-      if (!ev || !ALLOWED_KINDS.has(ev.kind)) continue;
+      if (!ALLOWED_KINDS.has(ev.kind)) continue;
       if (opts.onEvent) opts.onEvent(ev);
       this.emit('event', ev);
       this.emit(ev.kind, ev);
@@ -85,6 +114,64 @@ class Driver extends EventEmitter {
       }
     }
     return done;
+  }
+
+  /**
+   * Run a locally-registered tool for a `tool_request` and POST the result back
+   * to `/run/{runId}/result`. Never throws into the stream.
+   * @param {string|null} runId
+   * @param {object} ev        the tool_request event
+   * @param {Map<string, Tool>} registry
+   * @param {AbortSignal} [signal]
+   */
+  async _answerToolRequest(runId, ev, registry, signal) {
+    const callId = ev.call_id;
+    const name = String(ev.tool || '');
+    if (!runId || callId == null) return; // nothing to answer against
+
+    const raw = ev.args;
+    const args = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+
+    const tool = registry.get(name);
+    if (!tool) {
+      await this._postResult(runId, callId, { error: `unknown tool: ${name}` }, signal);
+      return;
+    }
+
+    const outcome = await tool.callSafe(args); // never rejects
+    if (outcome instanceof ToolError) {
+      await this._postResult(runId, callId, { error: outcome.message }, signal);
+    } else {
+      await this._postResult(runId, callId, { result: outcome.value }, signal);
+    }
+  }
+
+  /**
+   * POST a tool outcome to `/run/{runId}/result`. Failures are swallowed so a
+   * dead result channel can't crash the event stream.
+   * @param {string} runId
+   * @param {*} callId
+   * @param {{ result?: any, error?: string }} outcome
+   * @param {AbortSignal} [signal]
+   */
+  async _postResult(runId, callId, outcome, signal) {
+    const payload = { call_id: String(callId) };
+    if (outcome.error !== undefined) payload.error = outcome.error;
+    else payload.result = outcome.result;
+    try {
+      await this._fetch(`${this.baseUrl}${RUN_PATH}/${runId}/result`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal,
+      });
+    } catch (_) {
+      // Result delivery failed (server timed out the call, run ended, …). Keep
+      // reading the stream; the server handles the missing result.
+    }
   }
 }
 
@@ -147,6 +234,6 @@ function parseEvent(raw) {
   }
 }
 
-module.exports = { Driver };
+module.exports = { Driver, Tool, Param, ToolResult, ToolError, defineTool, parseSignature, normalizeParams, PARAM_DESC_MAX };
 module.exports.default = Driver;
 module.exports.parseSSE = parseSSE;

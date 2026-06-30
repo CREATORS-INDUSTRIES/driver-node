@@ -1,5 +1,99 @@
 import { EventEmitter } from 'events';
 
+/** Max length of a param description (chars). */
+export const PARAM_DESC_MAX: number;
+
+/** Inferred param type from runtime signature analysis. */
+export type ParamType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'unknown';
+
+/** A single declared parameter. */
+export class Param {
+  name: string;
+  type: ParamType | string;
+  description: string;
+  required: boolean;
+  constructor(opts: string | {
+    name: string;
+    type?: string;
+    description?: string;
+    required?: boolean;
+  });
+  toJSON(): { name: string; type: string; description: string; required: boolean };
+  /** Wire form: a `[name, type]` tuple — what the server's RunRequest expects. */
+  toWire(): [string, string];
+}
+
+/**
+ * One param declaration. `name` is required and the array order is the
+ * positional arg order passed to `call`. `type` is optional — omit it and it's
+ * inferred from the `call` signature at runtime. `description` is capped at
+ * PARAM_DESC_MAX chars.
+ */
+export interface ParamSpec {
+  name: string;
+  type?: ParamType | string;
+  description?: string;
+  required?: boolean;
+}
+
+/** Ordered param declarations. */
+export type ParamList = Array<ParamSpec | Param>;
+
+/** Parse a function's signature into ordered params with inferred types. */
+export function parseSignature(fn: Function): Array<{
+  name: string;
+  type: ParamType | string;
+  rest: boolean;
+  destructured: boolean;
+}>;
+
+/** Build catalog Param[] — order from `spec`, missing types inferred from `fn`. */
+export function normalizeParams(spec?: ParamList | string, fn?: Function): Param[];
+
+/** Successful tool output. Internal wrapper — `call` returns plain values. */
+export class ToolResult {
+  value: any;
+  meta: Record<string, any>;
+  constructor(value: any, meta?: Record<string, any>);
+  static of(value: any, meta?: Record<string, any>): ToolResult;
+  toJSON(): { ok: true; value: any; meta: Record<string, any> };
+}
+
+/** Tool failure. Internal wrapper for a throw out of `call`. */
+export class ToolError extends Error {
+  category: string;
+  cause?: any;
+  constructor(message: string, opts?: { category?: string; cause?: any });
+  toJSON(): { ok: false; category: string; message: string };
+}
+
+/**
+ * Node.js port of the Driver `Tool` trait. Subclass and override, or build one
+ * with `defineTool`.
+ */
+export class Tool {
+  /** Fully-qualified id, conventionally `module.member` (e.g. `fs.read_file`). */
+  name(): string;
+  /** One-line description shown in the catalog — the only thing the LLM sees. */
+  description(): string;
+  /** Ordered params `[{ name, type?, description? }]`. Types inferred from `call`. */
+  params(): ParamList;
+  /** Execute. Positional args spread in; return any plain value. May be async. */
+  call(...args: any[]): any;
+  /** Catalog entry sent to the cloud. `params` are `[name, type]` tuples. */
+  toJSON(): { name: string; description: string; params: Array<[string, string]> };
+  /** Run `call`, normalizing the return/throw. Never rejects. */
+  callSafe(args?: any[]): Promise<ToolResult | ToolError>;
+}
+
+/** Build a Tool from a plain spec — no class, no wrapping. */
+export function defineTool(spec: {
+  name: string;
+  description?: string;
+  params?: ParamList;
+  call: (...args: any[]) => any;
+}): Tool;
+
 export interface DataPayload {
   var: string;
   label: string;
@@ -57,6 +151,8 @@ export interface DriverOptions {
   baseUrl?: string;
   /** Custom fetch implementation. Defaults to global fetch (Node 18+). */
   fetch?: typeof fetch;
+  /** Default tools sent with every `run`. A per-run `tools` overrides this. */
+  tools?: Array<Tool | object>;
 }
 
 export interface RunOptions {
@@ -64,6 +160,8 @@ export interface RunOptions {
   onEvent?: (ev: AgentEvent) => void;
   /** Abort the SSE stream early. */
   signal?: AbortSignal;
+  /** Tools for this run; overrides constructor `tools`. */
+  tools?: Array<Tool | object>;
 }
 
 /**
@@ -75,6 +173,7 @@ export interface RunOptions {
 export class Driver extends EventEmitter {
   apiKey: string;
   baseUrl: string;
+  tools: Array<Tool | object>;
 
   constructor(opts?: DriverOptions);
   run(prompt: string, opts?: RunOptions): Promise<AgentEvent | null>;
