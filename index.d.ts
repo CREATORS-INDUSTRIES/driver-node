@@ -153,6 +153,11 @@ export interface DriverOptions {
   fetch?: typeof fetch;
   /** Default tools sent with every `run`. A per-run `tools` overrides this. */
   tools?: Array<Tool | object>;
+  /**
+   * Request zero data retention for every run by default; a per-run `zdr`
+   * overrides it. Requires the account entitlement (403 otherwise).
+   */
+  zdr?: boolean;
 }
 
 export interface RunOptions {
@@ -162,6 +167,13 @@ export interface RunOptions {
   signal?: AbortSignal;
   /** Tools for this run; overrides constructor `tools`. */
   tools?: Array<Tool | object>;
+  /**
+   * Zero data retention for THIS run; overrides the constructor default. The
+   * cloud stores nothing the execution sees: no prompt, no event log, no
+   * outputs. Events stream to this client and die here. Requires the account
+   * entitlement; without it the run fails with 403.
+   */
+  zdr?: boolean;
 }
 
 /**
@@ -174,9 +186,12 @@ export class Driver extends EventEmitter {
   apiKey: string;
   baseUrl: string;
   tools: Array<Tool | object>;
+  zdr: boolean;
 
   constructor(opts?: DriverOptions);
   run(prompt: string, opts?: RunOptions): Promise<AgentEvent | null>;
+  /** Sugar for `run(prompt, { zdr: true })`: zero-data-retention run. */
+  runZdr(prompt: string, opts?: Omit<RunOptions, 'zdr'>): Promise<AgentEvent | null>;
 
   on(event: 'event', listener: (ev: AgentEvent) => void): this;
   on(event: 'plan', listener: (ev: AgentEvent) => void): this;

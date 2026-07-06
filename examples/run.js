@@ -4,6 +4,10 @@
 //
 //   export DRIVER_API_KEY=dr_xxxxxxxx
 //   node examples/run.js "what is https://ycombinator.com about?"
+//   node examples/run.js --zdr "summarize this confidential brief"
+//
+// --zdr runs with zero data retention (needs the account entitlement; the
+// server answers 403 without it).
 //
 // Optional:
 //   export DRIVER_BASE_URL=https://driver.tors.app
@@ -16,8 +20,10 @@ async function main() {
     process.exit(2);
   }
 
-  const prompt = process.argv.slice(2).join(' ') || 'what is https://ycombinator.com about?';
-  const driver = new Driver(); // reads DRIVER_API_KEY / DRIVER_BASE_URL from env
+  const args = process.argv.slice(2);
+  const zdr = args.includes('--zdr');
+  const prompt = args.filter((a) => a !== '--zdr').join(' ') || 'what is https://ycombinator.com about?';
+  const driver = new Driver({}); // reads DRIVER_API_KEY / DRIVER_BASE_URL from env
 
   // DRIVER_DEBUG=1 dumps every raw event so we can see the real wire fields.
   if (process.env.DRIVER_DEBUG) {
@@ -33,10 +39,10 @@ async function main() {
     console.log(`  . ${ev.tool}${ev.is_network ? ' [net]' : ''}`);
   });
 
-  console.log(`prompt: ${prompt}`);
+  console.log(`prompt: ${prompt}${zdr ? '  [zdr]' : ''}`);
 
   try {
-    const done = await driver.run(prompt);
+    const done = await driver.run(prompt, { zdr });
     console.log(`\n[done] steps=${done.steps} errors=${done.errors}`);
     console.log('RESULT:', done.result);
     if (done.data && done.data.length) {

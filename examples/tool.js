@@ -9,6 +9,11 @@
 //
 //   export DRIVER_API_KEY=dr_xxxxxxxx
 //   node examples/tool.js "what should I wear in Barcelona today?"
+//   node examples/tool.js --zdr "what should I wear in Barcelona today?"
+//
+// --zdr runs with zero data retention (needs the account entitlement; the
+// server answers 403 without it). Client tools work exactly the same either
+// way — the tool_request round trip is live streaming, not retention.
 //
 // Optional:
 //   export DRIVER_BASE_URL=https://driver.tors.app
@@ -37,7 +42,9 @@ async function main() {
     process.exit(2);
   }
 
-  const prompt = process.argv.slice(2).join(' ') || 'what should I wear in Barcelona today?';
+  const args = process.argv.slice(2);
+  const zdr = args.includes('--zdr');
+  const prompt = args.filter((a) => a !== '--zdr').join(' ') || 'what should I wear in Barcelona today?';
 
   const weather = defineTool({
     name: 'get_weather',
@@ -61,10 +68,10 @@ async function main() {
   driver.on('plan_item_start', (ev) => console.log(`\n[->] ${ev.num + 1}. ${ev.def}`));
   driver.on('action', (ev) => console.log(`  . ${ev.tool}${ev.is_network ? ' [net]' : ''}`));
 
-  console.log(`prompt: ${prompt}`);
+  console.log(`prompt: ${prompt}${zdr ? '  [zdr]' : ''}`);
 
   try {
-    const done = await driver.run(prompt);
+    const done = await driver.run(prompt, { zdr });
     console.log(`\n[done] steps=${done.steps} errors=${done.errors}`);
     console.log('RESULT:', done.result);
   } catch (e) {

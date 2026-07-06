@@ -29,6 +29,9 @@ class Driver extends EventEmitter {
    * @param {typeof fetch} [opts.fetch] custom fetch impl (defaults to global fetch)
    * @param {object[]} [opts.tools] default tools sent with every `run`; a per-run
    *   `tools` option overrides this list for that call.
+   * @param {boolean} [opts.zdr] request zero data retention for every run by
+   *   default; a per-run `zdr` option overrides it. Needs the account
+   *   entitlement — without it the server rejects the run with 403.
    */
   constructor(opts = {}) {
     super();
@@ -43,6 +46,7 @@ class Driver extends EventEmitter {
       throw new Error('Driver: no fetch available — use Node 18+ or pass { fetch }');
     }
     this.tools = opts.tools || [];
+    this.zdr = assertZdr(opts.zdr) ?? false;
   }
 
   /**
@@ -54,6 +58,10 @@ class Driver extends EventEmitter {
    * @param {AbortSignal} [opts.signal] abort the stream early
    * @param {Array<Tool|object>} [opts.tools] tools for this run; overrides
    *   constructor `tools`. Tool instances run locally on `tool_request`.
+   * @param {boolean} [opts.zdr] zero data retention for THIS run; overrides the
+   *   constructor default. The cloud stores nothing the execution sees (no
+   *   prompt, no event log, no outputs) — events stream here and die here.
+   *   Requires the account entitlement; without it the run fails with 403.
    * @returns {Promise<object>} resolves with the final `done` event
    */
   async run(prompt, opts = {}) {
@@ -63,6 +71,10 @@ class Driver extends EventEmitter {
     if (tools && tools.length) {
       body.tools = tools.map((t) => (t instanceof Tool ? t.toJSON() : t));
     }
+    // Explicit per-run choice wins over the constructor default, both ways:
+    // `zdr: false` on a zdr-by-default client forces a retained run.
+    const zdr = assertZdr(opts.zdr) ?? this.zdr;
+    if (zdr) body.zdr = true;
     const res = await this._fetch(this.baseUrl + RUN_PATH, {
       method: 'POST',
       headers: {
@@ -114,6 +126,19 @@ class Driver extends EventEmitter {
       }
     }
     return done;
+  }
+
+  /**
+   * Run a prompt with zero data retention. Sugar for `run(prompt, { zdr: true })`:
+   * same streaming, same tools, same return — the cloud just never writes the
+   * run down. Requires the account entitlement (403 otherwise).
+   *
+   * @param {string} prompt      the task description
+   * @param {object} [opts]      same options as `run` (`zdr` is forced true)
+   * @returns {Promise<object>} resolves with the final `done` event
+   */
+  runZdr(prompt, opts = {}) {
+    return this.run(prompt, { ...opts, zdr: true });
   }
 
   /**
@@ -173,6 +198,21 @@ class Driver extends EventEmitter {
       // reading the stream; the server handles the missing result.
     }
   }
+}
+
+/**
+ * Validate a `zdr` option: strictly boolean or absent, no coercion. A truthy
+ * string like `"false"` silently ENABLING retention semantics the caller did
+ * not ask for is exactly the surprise this guards against — fail loud instead.
+ * @param {*} value
+ * @returns {boolean|undefined} the boolean, or undefined when not provided
+ */
+function assertZdr(value) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`Driver: zdr must be a boolean, got ${typeof value} (${JSON.stringify(value)})`);
+  }
+  return value;
 }
 
 /** Read a response body as text, swallowing errors (used for error messages). */
