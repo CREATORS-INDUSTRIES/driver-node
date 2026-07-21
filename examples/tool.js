@@ -56,7 +56,13 @@ async function main() {
     call: getWeather,
   });
 
-  const driver = new Driver({ tools: [weather] }); // reads DRIVER_API_KEY / DRIVER_BASE_URL
+  const driver = new Driver({ // reads DRIVER_API_KEY / DRIVER_BASE_URL from env
+    // baseUrl: 'http://localhost:8080',
+    tools: [weather],
+    engine: process.env.DRIVER_LLM_ENGINE,
+    engineKey: process.env.DRIVER_LLM_API_KEY,
+    model: process.env.DRIVER_LLM_MODEL,
+  });
 
   if (process.env.DRIVER_DEBUG) {
     driver.on('event', (ev) => console.error('RAW', JSON.stringify(ev)));

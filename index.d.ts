@@ -158,6 +158,18 @@ export interface DriverOptions {
    * overrides it. Requires the account entitlement (403 otherwise).
    */
   zdr?: boolean;
+  /**
+   * LLM backend for the runs: "openai" | "mistral" | "claude" | "openrouter".
+   * Left out, the cloud uses its default engine.
+   */
+  engine?: string;
+  /** Model id for the selected engine. */
+  model?: string;
+  /**
+   * Bring-your-own key for the selected engine (NOT the `dr_…` credential —
+   * that's `apiKey`).
+   */
+  engineKey?: string;
 }
 
 export interface RunOptions {
@@ -187,6 +199,9 @@ export class Driver extends EventEmitter {
   baseUrl: string;
   tools: Array<Tool | object>;
   zdr: boolean;
+  engine?: string;
+  model?: string;
+  engineKey?: string;
 
   constructor(opts?: DriverOptions);
   run(prompt: string, opts?: RunOptions): Promise<AgentEvent | null>;

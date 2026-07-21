@@ -11,6 +11,11 @@
 //
 // Optional:
 //   export DRIVER_BASE_URL=https://driver.tors.app
+//
+// Bring-your-own engine (all three optional; omit to use the cloud default):
+//   export DRIVER_LLM_ENGINE=openrouter        # openai | mistral | claude | openrouter
+//   export DRIVER_LLM_MODEL=openai/gpt-oss-120b
+//   export DRIVER_LLM_API_KEY=sk-or-...        # the engine's key, NOT the dr_ credential
 
 const { Driver } = require('..');
 
@@ -23,7 +28,12 @@ async function main() {
   const args = process.argv.slice(2);
   const zdr = args.includes('--zdr');
   const prompt = args.filter((a) => a !== '--zdr').join(' ') || 'what is https://ycombinator.com about?';
-  const driver = new Driver({}); // reads DRIVER_API_KEY / DRIVER_BASE_URL from env
+
+  const driver = new Driver({ // reads DRIVER_API_KEY / DRIVER_BASE_URL from env
+    // baseUrl: 'http://localhost:8080',
+    engine: "claude",
+    engineKey: "sk-..."//process.env.DRIVER_LLM_API_KEY,
+  });
 
   // DRIVER_DEBUG=1 dumps every raw event so we can see the real wire fields.
   if (process.env.DRIVER_DEBUG) {

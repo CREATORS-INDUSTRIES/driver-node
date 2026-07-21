@@ -32,6 +32,12 @@ class Driver extends EventEmitter {
    * @param {boolean} [opts.zdr] request zero data retention for every run by
    *   default; a per-run `zdr` option overrides it. Needs the account
    *   entitlement — without it the server rejects the run with 403.
+   * @param {string} [opts.engine] LLM backend for the runs:
+   *   "openai" | "mistral" | "claude" | "openrouter". Left out, the cloud uses
+   *   its default engine.
+   * @param {string} [opts.model] model id for the selected engine.
+   * @param {string} [opts.engineKey] bring-your-own key for the selected
+   *   engine (NOT the `dr_…` credential — that's `apiKey`).
    */
   constructor(opts = {}) {
     super();
@@ -47,6 +53,14 @@ class Driver extends EventEmitter {
     }
     this.tools = opts.tools || [];
     this.zdr = assertZdr(opts.zdr) ?? false;
+    this.engine = opts.engine;
+    this.model = opts.model;
+    this.engineKey = opts.engineKey;
+    // Choosing an engine requires bringing its key — the cloud rejects the
+    // run otherwise. Fail here, at construction, instead of on the first run.
+    if (this.engine && !this.engineKey) {
+      throw new Error('the engine requires engineKey');
+    }
   }
 
   /**
@@ -75,6 +89,10 @@ class Driver extends EventEmitter {
     // `zdr: false` on a zdr-by-default client forces a retained run.
     const zdr = assertZdr(opts.zdr) ?? this.zdr;
     if (zdr) body.zdr = true;
+    // Engine config from the constructor rides along with every run.
+    if (this.engine) body.engine = this.engine;
+    if (this.model) body.model = this.model;
+    if (this.engineKey) body.engineKey = this.engineKey;
     const res = await this._fetch(this.baseUrl + RUN_PATH, {
       method: 'POST',
       headers: {
