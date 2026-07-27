@@ -172,13 +172,26 @@ class Driver extends EventEmitter {
     const name = String(ev.tool || '');
     if (!runId || callId == null) return; // nothing to answer against
 
-    const raw = ev.args;
-    const args = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-
     const tool = registry.get(name);
     if (!tool) {
       await this._postResult(runId, callId, { error: `unknown tool: ${name}` }, signal);
       return;
+    }
+
+    // Named-args wire: a single plain object keyed by param name is zipped
+    // against the tool's declared param order (same contract as every other
+    // host). Arrays pass through positionally; a bare scalar is one arg.
+    const raw = ev.args;
+    let args;
+    if (Array.isArray(raw)) {
+      args = raw;
+    } else if (raw == null) {
+      args = [];
+    } else if (typeof raw === 'object') {
+      const names = (tool.params() || []).map((p) => p.name);
+      args = names.length ? names.map((n) => raw[n]) : [raw];
+    } else {
+      args = [raw];
     }
 
     const outcome = await tool.callSafe(args); // never rejects
